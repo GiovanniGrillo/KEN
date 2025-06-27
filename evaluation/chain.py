@@ -27,7 +27,7 @@ message_prompt = HumanMessagePromptTemplate(
 )
 prompt_template = ChatPromptTemplate.from_messages([message_prompt])
 
-model = "code-llama"  # can be "code-llama" or "gpt-3.5-turbo" or "gpt-3.5-turbo-16k"
+model = "code-llama"
 local_code_llama = True
 
 API_URL = "https://vbvhusef1oe4a22d.us-east-1.aws.endpoints.huggingface.cloud"
@@ -35,6 +35,34 @@ headers = {
     "Authorization": "Bearer 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",
     "Content-Type": "application/json"
 }
+
+def query_ollama(prompt: str, system_prompt: str = "", max_tokens: int = 512) -> str:
+    """Query Ollama locale"""
+    import requests
+
+    if system_prompt:
+        full_prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{prompt} [/INST]"
+    else:
+        full_prompt = f"<s>[INST] {prompt} [/INST]"
+
+    payload = {
+        "model": "codellama:7b-instruct",
+        "prompt": full_prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.7,
+            "num_predict": max_tokens
+        }
+    }
+
+    try:
+        response = requests.post("http://localhost:11434/api/generate", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        return result.get("response", "")
+    except Exception as e:
+        print(f"Errore Ollama: {e}")
+        return ""
 
 def query_endpoint(input: str):
     # set inpu to be last 1000
@@ -85,81 +113,35 @@ def ask_gpt_for_question(input: str, model_name: str) -> str:
 
 
 def run_gpt_for_bpftrace_hooks(input: str, model_name: str) -> str:
-    # If we pass in a model explicitly, we need to make sure it supports the OpenAI function-calling API.
-    llm = ChatOpenAI(model=model_name, temperature=0)
-    chain = create_openai_fn_chain(
-        [bpftrace_get_hooks], llm, prompt_template, verbose=False
-    )
-    full_prompt = f"""
-    Find possoble hook points for {input}
+    system_prompt = "You are a Linux kernel expert. Find the best hook pattern for this request. Return ONLY the regex pattern."
 
-    Attention: Only the first 10 matches will be returned in the bpftrace_get_hooks function.
-    For optimal results, craft your regex pattern with precision.
-
-    You should think about what hooks you would like for this user request, and
-    search for the most possible ones.
-
-        Example:
-
-                regex: kprobe:*sleep*
-
-        Will return:
-                kprobe:__x64_sys_clock_nanosleep_time32
-                kprobe:__x64_sys_nanosleep
-                kprobe:__x64_sys_nanosleep_time32
-                ...
-
-        Additional regex examples:
-                1. List open related syscall enter tracepoints:
-                regex: tracepoint:syscalls:sys_enter_open*
-
-                2. List raw syscalls tracepoints
-                regex: tracepoint:raw_syscalls:**
-
-                3. List all kprobes related to btrfs file operations:
-                regex: kprobe:*btrfs*file_*
-
-                4. List all things related to task switches:
-                regex: *sched_switch*
-
-                5. Retrieve hooks related to vmalloc:
-                regex: kprobe:*vmalloc*
-
-                6. hardware events related to cache:
-                hardware:*cache*
+    full_prompt = f"""Find possible hook points for {input}
     
-                7. tcp related kprobes:
-                kprobe:tcp_*
-"""
-    res = chain.run(full_prompt)
-    print(res)
-    prog = res["regex"]
-    return prog
+Examples: kprobe:*sleep*, tracepoint:syscalls:sys_enter_open*, kprobe:*signal*
 
+Return only the regex pattern:"""
+
+    response = query_ollama(full_prompt, system_prompt, 128)
+    # Estrai solo il pattern dalla risposta
+    lines = response.split('\n')
+    for line in lines:
+        line = line.strip()
+        if any(keyword in line for keyword in ['kprobe:', 'tracepoint:', '*']):
+            return line
+    return "kprobe:*"
 
 def run_gpt_for_bpftrace_progs(input: str, model_name: str) -> str:
-    # If we pass in a model explicitly, we need to make sure it supports the OpenAI function-calling API.
-    llm = ChatOpenAI(model=model_name, temperature=0)
-    chain = create_openai_fn_chain(
-        [run_bpftrace_prog_with_func_call_define], llm, prompt_template, verbose=False
-    )
-    res = chain.run(input)
-    print(res)
-    prog = res["prog"]
-    return prog
+    system_prompt = "You are an expert in bpftrace. Write ONLY the bpftrace program code, no explanations."
+    
+    response = query_ollama(input, system_prompt, 1024)
+    return extract_code_blocks(response)
 
 
 def run_gpt_for_libbpf_progs(input: str, model_name: str) -> str:
-    # If we pass in a model explicitly, we need to make sure it supports the OpenAI function-calling API.
-    llm = ChatOpenAI(model=model_name, temperature=0)
-    chain = create_openai_fn_chain(
-        [run_libbpf_prog_with_func_call_define], llm, prompt_template, verbose=False
-    )
-    res = chain.run(input)
-    print(res)
-    prog = res["prog"]
-    return prog
-
+    system_prompt = "You are an expert in eBPF C programming. Write ONLY the eBPF C code with headers."
+    
+    response = query_ollama(input, system_prompt, 2048)
+    return extract_code_blocks(response)
 
 def extract_code_blocks(text: str) -> str:
     # Check if triple backticks exist in the text
@@ -238,7 +220,7 @@ def generate_bpftrace_programs_based_on_model(input: str):
     elif model == "gpt-3.5-turbo":
         prog = run_gpt_for_bpftrace_progs(input, "gpt-3.5-turbo")
     elif model == "code-llama":
-        prog = run_code_llama_for_prog(input)
+        prog = run_gpt_for_bpftrace_progs(input, "code-llama")  # CORRETTO: usa bpftrace non libbpf
     elif model == "gpt-3.5-turbo-16k":
         prog = run_gpt_for_bpftrace_progs(input, "gpt-3.5-turbo-16k")
     else:
@@ -256,7 +238,7 @@ def generate_libbpf_programs_based_on_model(input: str):
     elif model == "gpt-3.5-turbo":
         prog = run_gpt_for_libbpf_progs(input, "gpt-3.5-turbo")
     elif model == "code-llama":
-        prog = run_code_llama_for_prog(input)
+        prog = run_gpt_for_libbpf_progs(input, "code-llama")  # Ollama
     elif model == "gpt-3.5-turbo-16k":
         prog = run_gpt_for_libbpf_progs(input, "gpt-3.5-turbo-16k")
     else:
@@ -265,12 +247,27 @@ def generate_libbpf_programs_based_on_model(input: str):
     return prog
 
 
+prova = True
+
+# modifica
 def run_bpftrace_progs_and_return_prompt(input: str, prog: str) -> str:
-    res = gpttrace.bpftrace_run_program(prog)
-    print(res)
-    data = json.loads(res)
-    data["prompt"] = input
-    return json.dumps(data)
+    if prova:
+        res = gpttrace.bpftrace_run_program(prog)
+        print(res)
+        data = json.loads(res)
+        data["prompt"] = input
+        return json.dumps(data)
+    else:
+        print(f"Generated program:\n{prog}")
+        data = {
+            "command": f"bpftrace -e '{prog}'",
+            "returncode": 0,
+            "stdout": "Program generated (execution disabled)",
+            "stderr": "",
+            "prompt": input,
+            "generated_program": prog
+        }
+        return json.dumps(data)
 
 
 def run_libbpf_progs_and_return_prompt(input: str, prog: str) -> str:
@@ -389,26 +386,7 @@ Remember to add necessary headers include to it.
 
 
 def ask_code_llama(question: str, sys_prompt: str) -> str:
-    if len(question) >= 4 * 2500:
-        print("question too long, truncating to 5 * 3000 chars")
-        question = question[: 4 * 3000]
-    llm = DeepInfra(model_id="codellama/CodeLlama-34b-Instruct-hf")
-    llm.model_kwargs = {
-        "temperature": 0.7,
-        "repetition_penalty": 1.2,
-        "max_new_tokens": 1500,
-        "top_p": 0.9,
-    }
-
-    template = f"""<s>[INST] <<SYS>>
-    {sys_prompt}
-    <</SYS>> {question} [/INST]"""
-
-    print("\n\n[ask code llama] prompt: ", template)
-    print(len(template))
-    res = llm.predict(template)
-    print("\n\n[ask code llama] res: ", res, "\n\n")
-    return res
+    return query_ollama(question, sys_prompt, 1500)
 
 
 def generate_hints(prompt: str) -> str:
@@ -633,7 +611,8 @@ class TestRunGPTtraceChain(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    res = run_vector_db_with_examples_3trails(
-        "if the process fork 20 times, kill it"
-    )
+    test_request = "trace process signals and log the signal names and process IDs affected."
+    print(f"Testing: {test_request}")
+
+    res = run_zero_shot_bpftrace(test_request)
     print(res)

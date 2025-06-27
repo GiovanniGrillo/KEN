@@ -1,0 +1,9 @@
+LICENSE
+README.md
+setup.py
+kenl.egg-info/PKG-INFO
+kenl.egg-info/SOURCES.txt
+kenl.egg-info/dependency_links.txt
+kenl.egg-info/not-zip-safe
+kenl.egg-info/requires.txt
+kenl.egg-info/top_level.txt

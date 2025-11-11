@@ -16,4 +16,4 @@ venv
 huggingface_hub
 evaluation/models/*
 pixel-kernel
-magic-trace
+magic-traceevaluation/few_shot_3trails_and_smt-deepseek-coder-v2:236b.txt

@@ -8,19 +8,76 @@ from typing import List, TypedDict
 from typing import Optional
 
 import os
-from langchain.document_loaders import JSONLoader
-from langchain.vectorstores import FAISS
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_community.document_loaders import JSONLoader
+from langchain_community.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.agents import Tool
 from langchain.agents import AgentType
 from langchain.memory import ConversationBufferMemory
-from langchain.chat_models import ChatOpenAI
-from langchain.utilities import SerpAPIWrapper
+from langchain_community.utilities import SerpAPIWrapper
 from langchain.agents import initialize_agent
-from langchain import LLMMathChain, OpenAI
+from langchain.chains import LLMMathChain
 from langchain.callbacks.base import BaseCallbackHandler
-from langchain.llms import CTransformers
 
+import ollama_utils
+
+from langchain.llms.base import LLM
+from typing import Any, List, Mapping, Optional
+
+class CodeLlamaLLM(LLM):
+    """Custom LLM wrapper for Code Llama via Ollama"""
+
+    temperature: float = 0.0
+    model_name: str = "deepseek-coder-v2:16b"
+
+    @property
+    def _llm_type(self) -> str:
+        return "codellama"
+
+    def _call(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Call Code Llama via Ollama API"""
+        response = ollama_utils.query_ollama(prompt, max_tokens=2000)
+        return response if response is not None else "Error: Failed to get response from Code Llama"
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        """Get the identifying parameters."""
+        return {"model_name": self.model_name, "temperature": self.temperature}
+
+from langchain.llms.base import LLM
+from typing import Any, List, Mapping, Optional
+
+class CodeLlamaLLM(LLM):
+    """Custom LLM wrapper for Code Llama via Ollama"""
+
+    temperature: float = 0.0
+    model_name: str = "deepseek-coder-v2:16b"
+
+    @property
+    def _llm_type(self) -> str:
+        return "codellama"
+
+    def _call(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Call Code Llama via Ollama API"""
+        response = ollama_utils.query_ollama(prompt, max_tokens=2000)
+        return response if response is not None else "Error: Failed to get response from Code Llama"
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        """Get the identifying parameters."""
+        return {"model_name": self.model_name, "temperature": self.temperature}
 
 class MyCustomHandler(BaseCallbackHandler):
     def on_llm_new_token(self, token: str, **kwargs) -> None:
@@ -97,7 +154,7 @@ kprobe:tcp_connect { printf("connected from pid %d, comm %s", pid, comm); }
 """
 
 GET_EXAMPLE_PROMPT: str = """
-    Get bpftrace examples from the database, with a query.
+    ALWAYS use this tool FIRST to get bpftrace examples from the database, with a query.
     If You need to write a ebpf program,
     Use this tool to check the examples before exec.
 
@@ -133,7 +190,8 @@ LIBBPF_BASIC_EXAMPLE = """
     """
 
 def get_top_n_example_from_libbpf_vec_db(query: str, n: int = 2) -> str:
-    embeddings = OpenAIEmbeddings()
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    
     # Check if the vector database files exist
     if not (
         os.path.exists("./data_save_libbpf/vector_db.faiss")
@@ -150,7 +208,10 @@ def get_top_n_example_from_libbpf_vec_db(query: str, n: int = 2) -> str:
     else:
         # Load an existing FAISS vector store
         db = FAISS.load_local(
-            "./data_save_libbpf", index_name="vector_db", embeddings=embeddings
+            "./data_save_libbpf", 
+            index_name="vector_db", 
+            embeddings=embeddings,
+            allow_dangerous_deserialization=True
         )
 
     results = db.search(query, search_type="similarity")
@@ -159,7 +220,8 @@ def get_top_n_example_from_libbpf_vec_db(query: str, n: int = 2) -> str:
 
 
 def get_top_n_example_from_bpftrace_vec_db(query: str, n: int = 2) -> str:
-    embeddings = OpenAIEmbeddings()
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    
     # Check if the vector database files exist
     if not (
         os.path.exists("./data_save/vector_db.faiss")
@@ -176,7 +238,10 @@ def get_top_n_example_from_bpftrace_vec_db(query: str, n: int = 2) -> str:
     else:
         # Load an existing FAISS vector store
         db = FAISS.load_local(
-            "./data_save", index_name="vector_db", embeddings=embeddings
+            "./data_save", 
+            index_name="vector_db", 
+            embeddings=embeddings,
+            allow_dangerous_deserialization=True
         )
 
     results = db.search(query, search_type="similarity")
@@ -381,82 +446,32 @@ def get_gpttrace_tools() -> List[Tool]:
     return tools
 
 
-def setup_openai_agent(
-    model_name: str = "gpt-3.5-turbo", temperature: float = 0
-) -> AgentType:
+def setup_codellama_agent(model_name: str = "deepseek-coder-v2:16b", temperature: float = 0) -> AgentType:
     """
-    setup the agent chain and return the agent
+    Setup the agent chain with Code Llama via Ollama
     """
     tools = get_gpttrace_tools()
-    llm = ChatOpenAI(temperature=0, model_name=model_name)
-    memory = ConversationBufferMemory(memory_key="chat_history")
-    agent_chain = initialize_agent(
-        tools,
-        llm,
-        agent=AgentType.OPENAI_MULTI_FUNCTIONS,
-        max_iterations=10,
-        verbose=True,
-        memory=memory,
-    )
-    return agent_chain
-
-
-def setup_react_agent(
-    model_name: str = "gpt-3.5-turbo", temperature: float = 0
-) -> AgentType:
-    """
-    setup the agent chain and return the agent
-    """
-    tools = get_gpttrace_tools()
-    llm = ChatOpenAI(temperature=0, model_name=model_name)
+    llm = CodeLlamaLLM(model_name=model_name, temperature=temperature)
     memory = ConversationBufferMemory(memory_key="chat_history")
     agent_chain = initialize_agent(
         tools,
         llm,
         agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-        max_iterations=10,
+        max_iterations=3,  # Ridotto da 10 a 3
         verbose=True,
         memory=memory,
     )
     return agent_chain
+
 
 def run_agent(name, agent_type, input_string):
     agent_chain = None
-    if agent_type == "react":
-        agent_chain = setup_react_agent(model_name=name)
-    elif agent_type == "openai":
-        agent_chain = setup_openai_agent(model_name=name)
-    elif agent_type == "codellama":
+    if agent_type == "codellama":
         agent_chain = setup_codellama_agent(model_name=name)
     else:
-        agent_chain = setup_react_agent(model_name=name)
+        agent_chain = setup_codellama_agent(model_name=name)  # Default to codellama
     agent_chain.run(input_string)
     return
-
-def run_react_agent_gpt4(name, input_string):
-    run_agent("gpt-4", "react", input_string)
-
-def setup_codellama_agent(
-    model_name: str = "gpt-3.5-turbo", temperature: float = 0
-) -> AgentType:
-    tools = get_gpttrace_tools()
-    # Download the required model in the https://huggingface.co/TheBloke/CodeLlama-7B-Python-GGUF#provided-files
-    # and place it in the models folder.
-    llm = CTransformers(
-        model="./models/codellama-7b-python.Q5_K_M.gguf",
-        model_type="llama",
-        config={"max_new_tokens": 256, "temperature": temperature},
-    )
-    memory = ConversationBufferMemory(memory_key="chat_history")
-    agent_chain = initialize_agent(
-        tools,
-        llm,
-        agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-        max_iterations=10,
-        verbose=True,
-        memory=memory,
-    )
-    return agent_chain
 
 
 def main() -> None:
@@ -464,25 +479,19 @@ def main() -> None:
     Program entry.
     """
     parser = argparse.ArgumentParser(
-        prog="GPTtrace",
-        description="Use ChatGPT to write eBPF programs (bpftrace, etc.)",
+        prog="KEN",
+        description="Use Code Llama to write eBPF programs (bpftrace, etc.)",
     )
     parser.add_argument(
         "-v", "--verbose", help="Show more details", action="store_true"
     )
     parser.add_argument(
-        "-k",
-        "--key",
-        help="Openai api key, see `https://platform.openai.com/docs/quickstart/add-your-api-key` or passed through `OPENAI_API_KEY`",
-        metavar="OPENAI_API_KEY",
-    )
-    parser.add_argument(
         "input_string", type=str, help="Your question or request for a bpf program"
     )
     parser.add_argument(
-        "--model_name", type=str, help="model_name", default="gpt-3.5-turbo"
+        "--model_name", type=str, help="model_name", default="deepseek-coder-v2:16b"
     )
-    parser.add_argument("--agent_type", type=str, help="agent_type")
+    parser.add_argument("--agent_type", type=str, help="agent_type", default="codellama")
     parser.add_argument(
         "--save_file",
         type=str,
@@ -491,23 +500,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if os.getenv("OPENAI_API_KEY", args.key) is None:
-        print(
-            "Either provide your access token through `-k` or through environment variable `OPENAI_API_KEY`"
-        )
-        return
-
     agent_chain = None
-    if args.agent_type == "react":
-        agent_chain = setup_react_agent(model_name=args.model_name)
-    elif args.agent_type == "openai":
-        agent_chain = setup_openai_agent(model_name=args.model_name)
-    elif args.agent_type == "codellama":
+    if args.agent_type == "codellama":
         agent_chain = setup_codellama_agent(model_name=args.model_name)
     else:
-        agent_chain = setup_react_agent(model_name=args.model_name)
+        agent_chain = setup_codellama_agent(model_name=args.model_name)  # Default to codellama
+    
     if args.input_string is not None:
-        agent_chain.run(input=args.input_string)
+        agent_chain.invoke({"input": args.input_string})
     else:
         parser.print_help()
 

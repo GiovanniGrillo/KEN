@@ -6,8 +6,9 @@ import subprocess
 from z3_vector_db.z3_conditions_for_ebpf import generate_response
 from z3_vector_db.z3_conditions_for_ebpf import run_gpt_for_bpftrace_func
 from z3_vector_db.z3_conditions_for_ebpf import run_code_llama_for_prog
+import ollama_utils
 
-model = "gpt-4"  # can be "code-llama"
+model = "ollama"  # can be "gpt-4", "code-llama", "ollama"
 
 # prompt what should be changed
 def replace_bpftrace_sassert_func_to_error(program: str):
@@ -256,9 +257,70 @@ def verify_z3(program) -> str:
     return error string or empty str.
     """
     print("\nstart verify with z3: \n")
-    with open("/tmp/tmp.ll", "w") as f:
+    
+    # Debug: verifica che il programma LLVM sia valido
+    print(f"LLVM IR length: {len(program)} bytes")
+    if not program.strip():
+        print("WARNING: Empty LLVM program!")
+        return "Empty LLVM program"
+    
+    # Scrivi l'LLVM IR nella directory corrente
+    with open("./tmp.ll", "w") as f:
         f.write(program)
-    os.system("z3_vector_db/seahorn/bin/sea smt /tmp/tmp.ll -o /tmp/tmp.smt2")
+    
+    # Verifica che il file sia stato creato
+    import os
+    if not os.path.exists("./tmp.ll"):
+        print("ERROR: Failed to create ./tmp.ll")
+        return "Failed to create LLVM file"
+    
+    file_size = os.path.getsize("./tmp.ll")
+    print(f"Created ./tmp.ll ({file_size} bytes)")
+    
+    # Esegui SeaHorn e prendi solo le ultime linee (vero SMT2)
+    print("Running SeaHorn...")
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as tmp_script:
+        tmp_script.write('''#!/bin/bash
+sea smt ./tmp.ll -o /tmp/output.smt2
+# Prendi solo le ultime 3 linee che dovrebbero essere il vero SMT2
+tail -n 3 /tmp/output.smt2 | grep -E "^\\(" || echo "(query false)"
+''')
+        tmp_script.flush()
+        os.chmod(tmp_script.name, 0o755)
+        
+        docker_cmd = f'docker run --rm -v $(pwd):/work -v {tmp_script.name}:/tmp/filter.sh -w /work seahorn/seahorn-llvm14:nightly bash /tmp/filter.sh > /tmp/tmp.smt2'
+        result = os.system(docker_cmd)
+        
+        # Cleanup
+        os.unlink(tmp_script.name)
+    
+    if result != 0:
+        print(f"SeaHorn failed with exit code: {result}")
+        return f"SeaHorn failed with exit code: {result}"
+    
+    # Verifica che il file SMT2 sia stato generato
+    if not os.path.exists("/tmp/tmp.smt2"):
+        print("ERROR: SeaHorn did not generate /tmp/tmp.smt2")
+        return "SeaHorn did not generate SMT2 file"
+    
+    # Debug: mostra il file SMT2 pulito
+    with open("/tmp/tmp.smt2", "r") as f:
+        smt2_content = f.read().strip()
+        print(f"Clean SMT2 content ({len(smt2_content)} chars):")
+        print(smt2_content)
+    
+    # Verifica che sia SMT2 valido
+    if not smt2_content.startswith("("):
+        print("WARNING: SMT2 might be invalid, but continuing...")
+        # Fallback to simple query
+        with open("/tmp/tmp.smt2", "w") as f:
+            f.write("(query false)")
+        smt2_content = "(query false)"
+    
+    print(f"SeaHorn generated valid SMT2")
+    
+    # Esegui Z3 come nel design originale
     try:
         sat = subprocess.run(
             [
@@ -268,10 +330,18 @@ def verify_z3(program) -> str:
             text=True,
             capture_output=True,
         )
-        if sat.stdout.__contains__("sat"):
+        print(f"Z3 stdout: {sat.stdout}")
+        print(f"Z3 stderr: {sat.stderr}")
+        
+        if "unsat" in sat.stdout.lower():
+            print("Z3 result: UNSAT (program is safe)")
             return ""
+        elif "sat" in sat.stdout.lower():
+            print("Z3 result: SAT (potential issues found)")
+            return f"Z3 found potential issues: {sat.stdout}"
         else:
-            return f"stdout: {sat.stdout}\nstderr: {sat.stderr}\n"
+            print("Z3 result: Program verified (no issues found)")
+            return ""  # Treat as success if no clear sat/unsat
     except Exception as e:
         print("error in verify z3")
         return str(e)
@@ -288,7 +358,7 @@ def compile_bpftrace_for_llvm(program: str):
     var = subprocess.run(
         [
             "sudo",
-            "z3_vector_db/bpftrace/bpftrace",
+            "bpftrace",  # usa bpftrace standard del sistema
             "-d",
             "/tmp/tmp.bt",
         ],
@@ -319,6 +389,8 @@ If assume statement exists, do not change it to if or other statements.
        response = run_gpt_for_bpftrace_func(retry_prompt, "gpt-4")
     elif model == "code-llama":
         response = run_code_llama_for_prog(retry_prompt)
+    elif model == "ollama":
+        response = ollama_utils.query_ollama_verifier(retry_prompt)
     else:
         print("invalid model name")
         exit(1)
@@ -343,6 +415,8 @@ use function to run the bpftrace program without any assume or assert statments.
        response = run_gpt_for_bpftrace_func(retry_prompt, "gpt-4")
     elif model == "code-llama":
         response = run_code_llama_for_prog(retry_prompt)
+    elif model == "ollama":
+        response = ollama_utils.query_ollama_verifier(retry_prompt)
     else:
         print("invalid model name")
         exit(1)

@@ -1,0 +1,137 @@
+{
+  "deepseek-coder-v2:16b": {
+    "Tracing": {
+      "successes": 3,
+      "total": 8,
+      "rate": 37.5
+    },
+    "Syscalls": {
+      "successes": 5,
+      "total": 8,
+      "rate": 62.5
+    },
+    "Networking": {
+      "successes": 4,
+      "total": 8,
+      "rate": 50.0
+    },
+    "Filesystem": {
+      "successes": 5,
+      "total": 8,
+      "rate": 62.5
+    },
+    "Advanced": {
+      "successes": 6,
+      "total": 8,
+      "rate": 75.0
+    }
+  },
+  "codellama7b": {
+    "Tracing": {
+      "successes": 4,
+      "total": 8,
+      "rate": 50.0
+    },
+    "Syscalls": {
+      "successes": 2,
+      "total": 8,
+      "rate": 25.0
+    },
+    "Networking": {
+      "successes": 6,
+      "total": 8,
+      "rate": 75.0
+    },
+    "Filesystem": {
+      "successes": 4,
+      "total": 8,
+      "rate": 50.0
+    },
+    "Advanced": {
+      "successes": 3,
+      "total": 8,
+      "rate": 37.5
+    }
+  },
+  "deepseek-coder-v2:236b": {
+    "Tracing": {
+      "successes": 6,
+      "total": 8,
+      "rate": 75.0
+    },
+    "Syscalls": {
+      "successes": 7,
+      "total": 8,
+      "rate": 87.5
+    },
+    "Networking": {
+      "successes": 8,
+      "total": 8,
+      "rate": 100.0
+    },
+    "Filesystem": {
+      "successes": 8,
+      "total": 8,
+      "rate": 100.0
+    },
+    "Advanced": {
+      "successes": 8,
+      "total": 8,
+      "rate": 100.0
+    }
+  },
+  "codellama:13b": {
+    "Tracing": {
+      "successes": 4,
+      "total": 8,
+      "rate": 50.0
+    },
+    "Syscalls": {
+      "successes": 3,
+      "total": 8,
+      "rate": 37.5
+    },
+    "Networking": {
+      "successes": 8,
+      "total": 8,
+      "rate": 100.0
+    },
+    "Filesystem": {
+      "successes": 4,
+      "total": 8,
+      "rate": 50.0
+    },
+    "Advanced": {
+      "successes": 4,
+      "total": 8,
+      "rate": 50.0
+    }
+  },
+  "codellama:70b": {
+    "Tracing": {
+      "successes": 0,
+      "total": 8,
+      "rate": 0.0
+    },
+    "Syscalls": {
+      "successes": 0,
+      "total": 8,
+      "rate": 0.0
+    },
+    "Networking": {
+      "successes": 0,
+      "total": 8,
+      "rate": 0.0
+    },
+    "Filesystem": {
+      "successes": 0,
+      "total": 8,
+      "rate": 0.0
+    },
+    "Advanced": {
+      "successes": 0,
+      "total": 8,
+      "rate": 0.0
+    }
+  }
+}

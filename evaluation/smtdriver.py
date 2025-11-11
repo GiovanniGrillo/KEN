@@ -22,7 +22,11 @@ def run_verifier_for_better_bpftrace_proram(context_desc: str, program: str) -> 
     with open('../ken/program.bt', 'w') as f:
         f.write(program)
     # Run the verifier for the better bpftrace program
-    run_python_script_in_dir('verifier.py', '../ken')
+    try:
+        run_python_script_in_dir('verifier.py', '../ken')
+    except:
+        print("Verifier failed, using original program")
+        return program
     
     res = ''
     with open('../ken/result.bt', 'r') as f:
@@ -32,4 +36,7 @@ def run_verifier_for_better_bpftrace_proram(context_desc: str, program: str) -> 
     return res
 
 if __name__ == "__main__":
-    run_python_script_in_dir('verifier.py', '../ken')
+    try:
+        run_python_script_in_dir('verifier.py', '../ken')
+    except:
+        print("Verifier failed")

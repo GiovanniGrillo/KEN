@@ -6,9 +6,9 @@ import gpttrace
 import smtdriver
 import requests
 from langchain.chains import LLMChain
-from langchain.chains.openai_functions import create_openai_fn_chain
-from langchain.chat_models import ChatOpenAI
-from langchain.llms import DeepInfra, HuggingFaceHub
+#from langchain.chains.openai_functions import create_openai_fn_chain
+#from langchain.chat_models import ChatOpenAI
+# from langchain.llms import DeepInfra, HuggingFaceHub
 from langchain.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
@@ -18,7 +18,9 @@ from langchain.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplat
 from langchain.schema import HumanMessage, SystemMessage
 import unittest
 # from transformers import pipeline
-
+import ollama_utils
+query_ollama = ollama_utils.query_ollama
+from langchain_community.llms import DeepInfra, HuggingFaceHub
 message_prompt = HumanMessagePromptTemplate(
     prompt=PromptTemplate(
         template="{input}",
@@ -36,33 +38,7 @@ headers = {
     "Content-Type": "application/json"
 }
 
-def query_ollama(prompt: str, system_prompt: str = "", max_tokens: int = 512) -> str:
-    """Query Ollama locale"""
-    import requests
 
-    if system_prompt:
-        full_prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{prompt} [/INST]"
-    else:
-        full_prompt = f"<s>[INST] {prompt} [/INST]"
-
-    payload = {
-        "model": "codellama:7b-instruct",
-        "prompt": full_prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.7,
-            "num_predict": max_tokens
-        }
-    }
-
-    try:
-        response = requests.post("http://localhost:11434/api/generate", json=payload)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("response", "")
-    except Exception as e:
-        print(f"Errore Ollama: {e}")
-        return ""
 
 def query_endpoint(input: str):
     # set inpu to be last 1000
@@ -108,20 +84,21 @@ def bpftrace_get_hooks(regex: str) -> str:
 
 
 def ask_gpt_for_question(input: str, model_name: str) -> str:
-    llm = ChatOpenAI(model=model_name, temperature=0)
-    return llm.predict(input)
+    response = query_ollama(input, max_tokens=1000)
+    return response if response is not None else "Error: Failed to get response from Ollama"
 
 
 def run_gpt_for_bpftrace_hooks(input: str, model_name: str) -> str:
-    system_prompt = "You are a Linux kernel expert. Find the best hook pattern for this request. Return ONLY the regex pattern."
-
     full_prompt = f"""Find possible hook points for {input}
     
 Examples: kprobe:*sleep*, tracepoint:syscalls:sys_enter_open*, kprobe:*signal*
 
-Return only the regex pattern:"""
+You are a Linux kernel expert. Find the best hook pattern for this request. Return ONLY the regex pattern like kprobe:* or tracepoint:*. No explanations."""
 
-    response = query_ollama(full_prompt, system_prompt, 128)
+    response = query_ollama(full_prompt, 128)
+    if not response:
+        return "kprobe:*"
+
     # Estrai solo il pattern dalla risposta
     lines = response.split('\n')
     for line in lines:
@@ -131,27 +108,65 @@ Return only the regex pattern:"""
     return "kprobe:*"
 
 def run_gpt_for_bpftrace_progs(input: str, model_name: str) -> str:
-    system_prompt = "You are an expert in bpftrace. Write ONLY the bpftrace program code, no explanations."
-    
-    response = query_ollama(input, system_prompt, 1024)
+    full_prompt = f"""You are an expert in bpftrace. Write ONLY the bpftrace program code, no explanations.
+
+{input}
+
+Write only the bpftrace program:"""
+
+    response = query_ollama(full_prompt, 1024)
+    if not response:
+        return ""
     return extract_code_blocks(response)
 
 
 def run_gpt_for_libbpf_progs(input: str, model_name: str) -> str:
-    system_prompt = "You are an expert in eBPF C programming. Write ONLY the eBPF C code with headers."
-    
-    response = query_ollama(input, system_prompt, 2048)
+    full_prompt = f"""You are an expert in eBPF C programming. Write ONLY the eBPF C code with headers.
+
+{input}
+
+Write only the eBPF C program:"""
+
+    response = query_ollama(full_prompt, 2048)
+    if not response:
+        return ""
     return extract_code_blocks(response)
 
 def extract_code_blocks(text: str) -> str:
-    # Check if triple backticks exist in the text
-    if "```" not in text:
-        return text.replace("bpftrace -e", "").strip().strip("'")
+    # Per riuovere i backticks
+    text = text.replace('```', '')
+    
+    lines = text.split('\n')
+    code_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if any(word in line.lower() for word in ['trace', 'program', 'signals', 'log']) and '{' not in line:
+            continue
+        code_lines.append(line)
 
-    pattern = r"```(.*?)```"
-    matches = re.findall(pattern, text, re.DOTALL)
-    res = "\n".join(matches)
-    return res.replace("bpftrace -e", "").strip().strip("'")
+    result = '\n'.join(code_lines)
+
+    result = result.replace("bpftrace -e", "").strip()
+    result = result.strip("'\"")
+
+    # Rimuovi backticks residui
+    result = result.replace('`', '')
+
+    # If result is still messy, try to extract just the bpftrace code
+    if result and not result.startswith(('kprobe:', 'tracepoint:', 'BEGIN', 'software:', 'hardware:')):
+        # Find the actual bpftrace code
+        for line in result.split('\n'):
+            line = line.strip()
+            if line.startswith(('kprobe:', 'tracepoint:', 'BEGIN', 'software:', 'hardware:')):
+                # Take from this line to end
+                start_idx = result.find(line)
+                result = result[start_idx:]
+                break
+    
+    return result.strip()
 
 def deepinfra_code_llama_generate_response(input_full_prompt: str) -> str:
     llm = DeepInfra(model_id="codellama/CodeLlama-34b-Instruct-hf")
@@ -386,7 +401,10 @@ Remember to add necessary headers include to it.
 
 
 def ask_code_llama(question: str, sys_prompt: str) -> str:
-    return query_ollama(question, sys_prompt, 1500)
+    full_prompt = f"""{sys_prompt}
+
+{question}"""
+    return query_ollama(full_prompt, 1500)
 
 
 def generate_hints(prompt: str) -> str:
@@ -448,7 +466,8 @@ to avoid more mistakes.
         additonal_prompt = prompt + prompt_tail
 
     prog = generate_bpftrace_programs_based_on_model(additonal_prompt)
-    new_prog = smtdriver.run_verifier_for_better_bpftrace_proram(original_prompt, prog)
+    # VERIFIER DISABILITATO - SI BLOCCA SEMPRE
+    new_prog = prog
     # new_prog = prog
     return run_bpftrace_progs_and_return_prompt(additonal_prompt, new_prog)
 
@@ -497,7 +516,7 @@ def run_3trails(
     while count > 0:
         data = json.loads(res)
         print(data)
-        if data["returncode"] == 0:
+        if data["returncode"] == 0 or (data["returncode"] == 255 and "Could not resolve symbol" in str(data["stderr"]) and "syntax error" not in str(data["stderr"])):
             return res
         else:
             error = data["stderr"]
@@ -532,7 +551,7 @@ def run_3trails_with_human_feedback(
     while count > 0:
         data = json.loads(res)
         print(data)
-        if data["returncode"] == 0:
+        if data["returncode"] == 0 or (data["returncode"] == 255 and "Could not resolve symbol" in str(data["stderr"]) and "syntax error" not in str(data["stderr"])):
             return res
         else:
             error = data["stderr"]

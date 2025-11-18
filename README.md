@@ -19,9 +19,8 @@ The following major enhancements and architectural modifications were introduced
 #### 1. Local LLM Inference with Ollama
 Replaced OpenAI-based API calls with a **local REST interface** powered by [Ollama](https://ollama.ai), enabling the execution of open-source models directly on GPU hardware.  
 The baseline model was **CodeLlama-7B-Instruct**, later extended to a multi-model configuration supporting:
-- CodeLlama (7B–70B)
-- DeepSeek-Coder (6.7B–236B)
-- WizardCoder (13B)
+- CodeLlama (7B–13B–70B)
+- DeepSeek-Coder (16B–236B)
 
 This setup provides full local control, eliminates dependency on proprietary APIs, and allows rapid switching between models through configuration changes only.
 
